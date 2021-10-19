@@ -6,6 +6,6 @@
   "author": "YutaUra <yuuta3594@outlook.jp>",
   "license": "MIT",
   "dependencies": {
-    "zenn-cli": "^0.1.94"
+    "zenn-cli": "^0.1.98"
   }
 }
