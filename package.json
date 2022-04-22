@@ -5,6 +5,9 @@
   "repository": "git@github.com:YutaUra/zenn.dev.git",
   "author": "YutaUra <yuuta3594@outlook.jp>",
   "license": "MIT",
+  "scripts": {
+    "preview": "zenn preview"
+  },
   "dependencies": {
     "zenn-cli": "^0.1.109"
   }
