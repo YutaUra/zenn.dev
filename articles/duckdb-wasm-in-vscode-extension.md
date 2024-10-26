@@ -3,11 +3,11 @@ title: "duckdb-wasm を使った VSCode 拡張機能の作り方"
 emoji: "🦆"
 type: "tech" # tech: 技術記事 / idea: アイデア
 topics: ["vscode", "duckdb", "wasm"]
-published: false
+published: true
 ---
 
 この記事を必要とする人はあまりいないかもしれません。
-しかし、 VSCode の拡張機能を作る際に、 duckdb を利用するには癖があるためその解説を行いたいと思います。
+VSCode の拡張機能を作る際に、 duckdb を利用するには癖があるためその解説を行いたいと思います。
 
 ## DuckDB とは
 
@@ -17,11 +17,11 @@ DuckDB には [duckdb-wasm](https://github.com/duckdb/duckdb-wasm) という Web
 
 ## モチベーション
 
-VSCode の拡張機能を使う際に、SQL を interface とした構造的なファイル検索システムを作りたいと考えました。
-イメージとしては、例えば github actions のワークフローが大量に存在していて、特定の条件に満たすワークフローを検索するときに、こんな SQL で検索できたら便利だなとは思いませんか?
+VSCode の拡張機能として、SQL を interface とした構造的なファイル検索システムを作りたいと考えました。
+イメージとしては、例えば github actions のワークフローが大量に存在していて、特定の条件に満たすワークフローを検索するときに、こんな SQL で検索できたら便利だなと思いませんか?
 
 ```sql
-SELECT *
+SELECT filename
 FROM files
 WHERE
   filename LIKE ".github/workflows/%.yml"
@@ -95,7 +95,7 @@ const conn = await db.connect();
 await conn.query(`SELECT count(*)::INTEGER as v FROM generate_series(0, 100) t(v)`);
 ```
 
-通常であれば、上記のようにすることで期待通りに動作するはずです。しかし、バンドルをして、 VSCode 拡張機能として利用する場合は、以下のような問題が発生します。
+通常であれば、上記のようにすることで期待通りに動作するはずです。しかし、バンドルをして、 VSCode 拡張機能として利用する場合は、以下のような問題が発生します。（厳密なエラーメッセージは忘れたので雰囲気です）
 
 - `module not found @duckdb/duckdb-wasm` とか `module not found duckdb-node-eh.worker.cjs` エラーが発生する
 - `module not found xxxx` エラーが発生する
@@ -131,7 +131,7 @@ extension.ts と duckdb.ts がバンドルされて extension.js になってい
 
 `@duckdb/duckdb-wasm` は node_modules にインストールされているライブラリですが、 `dist` フォルダには `node_modules` が存在せず、結果的に extension.js から `@duckdb/duckdb-wasm` を見つけることができません。
 
-なので、 worker ファイルが別途 `dist` フォルダに追加されるように設定する必要があります。
+なので、 worker ファイルも合わせて `dist` フォルダに追加されるように設定する必要があります。
 
 ```text
 .
@@ -186,13 +186,13 @@ const worker = new Worker(path.join(__dirname, "duckdb-node-eh.worker.cjs"));
 
 はい。それでは正解の発表です。
 
-正解は Worker として起動する際には Node.js の `worker_threads` が利用されるため、子スレッドで実行される際には実行コンテキストが異なるため、 `vscode` モジュールが利用できないということです。
+正解は Worker(正確には `web-worker` による Node.js polyfill) として起動する際は Node.js の `worker_threads` が利用されます。子スレッドの実行コンテキストはメインスレッドとは異なるため、 `vscode` モジュールが利用できないということです。（詳しくは知りません。詳しい人いたら教えてください）
 
-先述までのコードでは `vscode` モジュールは利用していませんが、実際の VSCode 拡張機能では以下のようなコードとなるがあるでしょう。
+先述までのコードでは `vscode` モジュールは利用していませんが、実際の VSCode 拡張機能では以下のようなコードを書くことになります。
 
 ```javascript
 import * as vscode from 'vscode'
-import {initDB} from './duckdb' // duckdb の初期化処理を別ファイルに切り出している
+import { initDB } from './duckdb' // 仮に duckdb の初期化処理を別ファイルに切り出している
 
 export async function activate(context: vscode.ExtensionContext) {
   const db = await initDB()
@@ -228,7 +228,7 @@ exports.activate = async function activate (context) {
 
 イメージですが、こんな感じになります。
 
-すると worker_threads で起動される子スレッドは `extension.js` がベースとなってしまいます。しかし `extension.js` では `vscode` が読み込まれていますが、子スレッドでは `vscode` を利用することはできないため、 `module not found vscode` エラーが発生するというわけです。
+すると worker_threads で起動される子スレッドは `extension.js` がベースとなってしまいます。 `extension.js` では `vscode` が読み込まれていますが、子スレッドでは `vscode` を利用することはできないため、 `module not found vscode` エラーが発生するというわけです。
 
 そのため先述の `initDB` の処理は `extension.js` にバンドルさせずに、別ファイルに切り出す必要があります。
 
@@ -350,7 +350,7 @@ const config = {
     rules: [
       {
         // dynamic require のままにしたい
-        test: [/node_modules\/web-worker\/node.js$/, /node_modules\/@duckdb\/duckdb-wasm\/dist\/duckdb-node.cjs/],
+        test: [/node_modules\/web-worker\/node.js$/, /node_modules\/@duckdb\/duckdb-wasm\/dist\/duckdb-node.cjs$/],
         loader: 'string-replace-loader',
         options: {
           search: /require\((mod|s)\)/g,
@@ -382,7 +382,7 @@ module.exports = config;
 
 webpack で dynamic require をするとファイルが解決できない場合に `webpackEmptyContext` とかに変換されてエラーになっちゃうんですよね。runtime でファイルが存在していても関係ないって感じなので、いろいろ調べてみましたけど今回の方法しか見つけられませんでした。
 
-esbuild の方がよっぽど素直なので、既存プロジェクトとかではない限り esbuild を使うのがいいかもしれません。
+esbuild の方がよっぽど素直なので、新規プロジェクトであれば esbuild を使うのがいいかもしれません。
 
 というわけで、 duckdb-wasm を使った VSCode 拡張機能の作り方でした。
 もし duckdb-wasm を VSCode 拡張に使ったよ！という方がいれば、ぜひ教えてください。
